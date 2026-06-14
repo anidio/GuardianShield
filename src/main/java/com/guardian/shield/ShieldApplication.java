@@ -16,9 +16,11 @@ public class ShieldApplication {
 	@Bean
 	CommandLineRunner runScanner(SecurityScannerService scanner) {
 		return args -> {
-			// Teste de fogo: Google não faz POST na home,
-			// mas vamos ver o log de navegação confirmando que o motor está vivo
-			scanner.scanUrl("https://g1.globo.com");
+			// Usamos uma Thread separada para o scan não bloquear o boot do Spring
+			Thread scanThread = new Thread(() -> {
+				scanner.scanUrl("https://g1.globo.com");
+			});
+			scanThread.start();
 		};
 	}
 }
