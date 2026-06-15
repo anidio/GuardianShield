@@ -1,26 +1,26 @@
 package com.guardian.shield.service;
 
 import com.guardian.shield.model.SecurityAlert;
+import com.guardian.shield.repository.SecurityAlertRepository;
 import com.microsoft.playwright.*;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.Getter;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class SecurityScannerService {
+
+    // Injetando o repositório pelo construtor (gerado pelo Lombok)
+    private final SecurityAlertRepository alertRepository;
 
     private Playwright playwright;
     private Browser browser;
-
-    @Getter
-    private final List<SecurityAlert> alerts = Collections.synchronizedList(new ArrayList<>());
 
     @PostConstruct
     public void init() {
@@ -29,7 +29,6 @@ public class SecurityScannerService {
         log.info("GuardianShield: Motor de escaneamento inicializado com sucesso.");
     }
 
-    // CRÍTICO: Garante que navegadores não fiquem abertos no background
     @PreDestroy
     public void cleanup() {
         if (browser != null) browser.close();
@@ -37,16 +36,17 @@ public class SecurityScannerService {
         log.info("GuardianShield: Recursos de escaneamento liberados.");
     }
 
+    public List<SecurityAlert> getAllAlerts() {
+        // buscamos direto do banco de dados!
+        return alertRepository.findAll();
+    }
+
     public void scanUrl(String url) {
         log.info("Iniciando varredura em: {}", url);
         try (BrowserContext context = browser.newContext()) {
             Page page = context.newPage();
-
-            // Adicionamos um listener que realmente processa as requisições
             page.onRequest(this::processRequest);
-
             page.navigate(url);
-            // Aumentei o tempo para 10s para garantir a captura de sites lentos
             page.waitForTimeout(10000);
         } catch (Exception e) {
             log.error("Erro ao escanear URL {}: {}", url, e.getMessage());
@@ -66,7 +66,7 @@ public class SecurityScannerService {
         }
 
         if (payload != null && isSensitive(payload)) {
-            log.warn("🚨 ALERTA CRÍTICO: Possível vazamento em {}", destination);
+            log.warn("🚨 ALERTA CRÍTICO: Possível vazamento detectado em {}", destination);
 
             SecurityAlert alert = SecurityAlert.builder()
                     .url(destination)
@@ -74,10 +74,12 @@ public class SecurityScannerService {
                     .method("POST")
                     .payload(payload)
                     .riskScore(10)
-                    .reason("Detecção de dados sensíveis (senha/credencial) em tráfego de saída")
+                    .reason("Detecção de dados sensíveis (senha/credencial/CPF) em tráfego de saída")
                     .build();
 
-            alerts.add(alert);
+            // Salva diretamente no PostgreSQL via JPA
+            alertRepository.save(alert);
+            log.info("✅ Alerta persistido no banco de dados.");
         }
     }
 
@@ -85,7 +87,7 @@ public class SecurityScannerService {
         return url.contains("google-analytics") ||
                 url.contains("facebook.net") ||
                 url.contains("facebook.com") ||
-                url.contains("doubleclick.net"); // Adicionado mais um comum de ruído
+                url.contains("doubleclick.net");
     }
 
     private boolean isSensitive(String payload) {
@@ -95,6 +97,6 @@ public class SecurityScannerService {
                 p.contains("token") ||
                 p.contains("secret") ||
                 p.contains("credit_card") ||
-                p.contains("cpf"); // Incluindo CPF para conformidade com a LGPD no Brasil
+                p.contains("cpf");
     }
 }

@@ -22,6 +22,6 @@ public class SecurityAlertController {
     @GetMapping
     @Operation(summary = "Lista todos os alertas detectados", description = "Retorna os últimos alertas de segurança processados pelo GuardianShield")
     public List<SecurityAlert> getAllAlerts() {
-        return scannerService.getAlerts();
+        return scannerService.getAllAlerts();
     }
 }
