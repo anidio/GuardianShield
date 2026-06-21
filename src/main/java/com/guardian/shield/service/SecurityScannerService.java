@@ -16,7 +16,6 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SecurityScannerService {
 
-    // Injetando o repositório pelo construtor (gerado pelo Lombok)
     private final SecurityAlertRepository alertRepository;
 
     private Playwright playwright;
@@ -26,7 +25,7 @@ public class SecurityScannerService {
     public void init() {
         this.playwright = Playwright.create();
         this.browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
-        log.info("GuardianShield: Motor de escaneamento inicializado com sucesso.");
+        log.info("GuardianShield: Motor de escaneamento baseado em Playwright inicializado com sucesso.");
     }
 
     @PreDestroy
@@ -36,23 +35,52 @@ public class SecurityScannerService {
         log.info("GuardianShield: Recursos de escaneamento liberados.");
     }
 
-    public List<SecurityAlert> getAllAlerts() {
-        // buscamos direto do banco de dados!
+    /**
+     * Retorna todos os alertas salvos no PostgreSQL para renderização no Front-End.
+     */
+    public List<SecurityAlert> getAlerts() {
         return alertRepository.findAll();
     }
 
+    /**
+     * Executa a varredura ativa baseada na URL fornecida.
+     */
     public void scanUrl(String url) {
-        log.info("Iniciando varredura em: {}", url);
+        log.info("Iniciando varredura ativa em: {}", url);
         try (BrowserContext context = browser.newContext()) {
             Page page = context.newPage();
             page.onRequest(this::processRequest);
             page.navigate(url);
-            page.waitForTimeout(10000);
+            page.waitForTimeout(10000); // 10 segundos inspecionando o tráfego de rede da página
         } catch (Exception e) {
             log.error("Erro ao escanear URL {}: {}", url, e.getMessage());
         }
     }
 
+    /**
+     * Método acionado pelo botão 'DISPARAR SCAN ATIVO' do Front-End (via Controller)
+     * para simular um evento rápido e popular a interface em tempo real.
+     */
+    public List<SecurityAlert> runScan() {
+        log.info("Disparando scan de contingência/teste sob demanda pelo painel web.");
+
+        // Simula uma varredura em uma URL de teste local ou sandbox
+        SecurityAlert sample = SecurityAlert.builder()
+                .url("https://sandbox-auth.guardianshield.local/v1/oauth")
+                .destination("https://api.external-leak-test.com/analytics")
+                .method("POST")
+                .payload("{ \"user\": \"admin\", \"secret_token\": \"gs_live_9a2f1c8e\" }")
+                .riskScore(85) // Risco Alto
+                .reason("Detecção de credenciais administrativas expostas em requisição de saída terceirizada.")
+                .build();
+
+        alertRepository.save(sample);
+        return alertRepository.findAll();
+    }
+
+    /**
+     * Interceptador de requisições de rede do Playwright
+     */
     private void processRequest(Request request) {
         if (!"POST".equals(request.method())) {
             return;
@@ -68,18 +96,21 @@ public class SecurityScannerService {
         if (payload != null && isSensitive(payload)) {
             log.warn("🚨 ALERTA CRÍTICO: Possível vazamento detectado em {}", destination);
 
+            // Calcula a criticidade real com base no conteúdo do payload
+            int calculatedScore = calculateRiskScore(payload);
+
             SecurityAlert alert = SecurityAlert.builder()
                     .url(destination)
                     .destination(destination)
                     .method("POST")
                     .payload(payload)
-                    .riskScore(10)
-                    .reason("Detecção de dados sensíveis (senha/credencial/CPF) em tráfego de saída")
+                    .riskScore(calculatedScore)
+                    .reason("Detecção de dados sensíveis (senha/credencial/CPF) em tráfego de saída monitorado por Playwright.")
                     .build();
 
             // Salva diretamente no PostgreSQL via JPA
             alertRepository.save(alert);
-            log.info("✅ Alerta persistido no banco de dados.");
+            log.info("✅ Alerta persistido no banco de dados com score de risco: {}", calculatedScore);
         }
     }
 
@@ -98,5 +129,19 @@ public class SecurityScannerService {
                 p.contains("secret") ||
                 p.contains("credit_card") ||
                 p.contains("cpf");
+    }
+
+    /**
+     * Motor Auxiliar: Define matematicamente a gravidade do incidente de 0 a 100
+     */
+    private int calculateRiskScore(String payload) {
+        String p = payload.toLowerCase();
+        if (p.contains("password") || p.contains("pwd") || p.contains("cpf")) {
+            return 95; // Risco Crítico -> Vai direto para o card vermelho de ameaças críticas do Next.js
+        }
+        if (p.contains("credit_card") || p.contains("secret")) {
+            return 85; // Risco Alto -> Vai para o card laranja de riscos altos
+        }
+        return 60; // Risco Médio/Alto padrão para tokens genéricos
     }
 }
